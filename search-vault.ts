@@ -1,7 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 
 const apiKey = process.env.VAULT_EMBED_API_KEY || process.env.GEMINI_API_KEY;
-if (!apiKey) throw new Error("🚨 VAULT_EMBED_API_KEY ou GEMINI_API_KEY manquante.");
+if (!apiKey)
+  throw new Error("🚨 VAULT_EMBED_API_KEY ou GEMINI_API_KEY manquante.");
 
 const ai = new GoogleGenAI({ apiKey });
 
@@ -12,9 +13,13 @@ let repoFilter = process.env.GITHUB_REPOSITORY;
 const questionParts: string[] = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
-  if (rawArgs[i] === "--corpus" && rawArgs[i + 1]) { corpusFilter = rawArgs[++i]; }
-  else if (rawArgs[i] === "--repo" && rawArgs[i + 1]) { repoFilter = rawArgs[++i]; }
-  else { questionParts.push(rawArgs[i]); }
+  if (rawArgs[i] === "--corpus" && rawArgs[i + 1]) {
+    corpusFilter = rawArgs[++i];
+  } else if (rawArgs[i] === "--repo" && rawArgs[i + 1]) {
+    repoFilter = rawArgs[++i];
+  } else {
+    questionParts.push(rawArgs[i]);
+  }
 }
 
 const question = questionParts.join(" ");
@@ -61,7 +66,9 @@ async function searchVault() {
   }
 
   if (fileParts.length === 0) {
-    console.log("🤷 Aucun fichier trouvé (vault vide ou filtres trop restrictifs).");
+    console.log(
+      "🤷 Aucun fichier trouvé (vault vide ou filtres trop restrictifs).",
+    );
     return;
   }
 
@@ -70,7 +77,7 @@ async function searchVault() {
   console.log();
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: "gemini-3-flash-preview",
     contents: [
       {
         role: "user",
