@@ -43,18 +43,13 @@ async function syncFiles() {
   let totalVaultSizeBytes = 0;
 
   console.log(`🔍 Analyse du Vault [${corpusName}] pour le repo [${githubRepo}]...`);
-  try {
-    const listResult = (ai.files as any).list();
-    const pager = typeof listResult?.then === 'function' ? await listResult : listResult;
-    const allKeys = new Set<string>();
-    let o = pager;
-    while (o && o !== Object.prototype) { Object.getOwnPropertyNames(o).forEach(k => allKeys.add(k)); o = Object.getPrototypeOf(o); }
-    console.log(`[debug] pager ctor=${pager?.constructor?.name} allKeys=${[...allKeys].slice(0,20).join(',')}`);
-    const hasAsyncIter = typeof pager?.[Symbol.asyncIterator] === 'function';
-    const hasSyncIter = typeof pager?.[Symbol.iterator] === 'function';
-    console.log(`[debug] hasAsyncIter=${hasAsyncIter} hasSyncIter=${hasSyncIter} hasPage=${Array.isArray(pager?.page)}`);
-  } catch (e: any) {
-    console.warn(`⚠️ [debug] listing error: ${e?.message}`);
+  const pager = await ai.files.list();
+  for await (const file of pager) {
+    const meta = parseDisplayName(file.displayName);
+    if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
+      totalVaultSizeBytes += Number(file.sizeBytes || 0);
+      existingFiles.set(meta.path, file.name!);
+    }
   }
 
   // --- ÉTAPE 2 : MUTATIONS (DELETE / UPLOAD) ---
