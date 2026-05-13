@@ -107,8 +107,10 @@ async function syncFiles() {
 
       const uploadRes = await ai.files.upload({
         file: path,
-        mimeType: mimeType,
-        displayName: path.split("/").pop(),
+        config: {
+          mimeType: mimeType,
+          displayName: path.split("/").pop(),
+        },
       });
 
       await ai.files.update({
