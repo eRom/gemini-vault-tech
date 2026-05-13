@@ -11,6 +11,17 @@ const ai = new GoogleGenAI({ apiKey: process.env.VAULT_EMBED_API_KEY });
 const corpusName = process.env.VAULT_CORPUS_NAME || "default";
 const githubRepo = process.env.GITHUB_REPOSITORY || "unknown-repo";
 
+// Format: "vault|{corpus}|{repo}|{path}"
+const encodeDisplayName = (path: string) =>
+  `vault|${corpusName}|${githubRepo}|${path}`;
+
+const parseDisplayName = (displayName?: string) => {
+  if (!displayName?.startsWith("vault|")) return null;
+  const parts = displayName.split("|");
+  if (parts.length !== 4) return null;
+  return { corpus: parts[1], repo: parts[2], path: parts[3] };
+};
+
 async function syncFiles() {
   const parseList = (envVar?: string) =>
     envVar?.split(" ").filter(Boolean) || [];
@@ -30,28 +41,15 @@ async function syncFiles() {
   // --- ÉTAPE 1 : ANALYSE DE L'EXISTANT + FILTRAGE PAR REPO/CORPUS ---
   const existingFiles = new Map<string, string>();
   let totalVaultSizeBytes = 0;
-  let pageToken: string | undefined;
 
   console.log(`🔍 Analyse du Vault [${corpusName}] pour le repo [${githubRepo}]...`);
-  do {
-    const response = await ai.files.list({ pageSize: 100, pageToken });
-    for (const file of response.files || []) {
-      const size = Number(file.sizeBytes || 0);
-      
-      const fileRepo = file.customMetadata?.find((m) => m.key === "github_repo")?.stringValue;
-      const fileCorpus = file.customMetadata?.find((m) => m.key === "vault_corpus")?.stringValue;
-      const filePath = file.customMetadata?.find((m) => m.key === "github_path")?.stringValue;
-
-      // On ne comptabilise et on ne gère que les fichiers appartenant à ce repo et ce corpus
-      if (fileRepo === githubRepo && fileCorpus === corpusName) {
-        totalVaultSizeBytes += size;
-        if (filePath) {
-          existingFiles.set(filePath, file.name);
-        }
-      }
+  for await (const file of ai.files.list()) {
+    const meta = parseDisplayName(file.displayName);
+    if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
+      totalVaultSizeBytes += Number(file.sizeBytes || 0);
+      existingFiles.set(meta.path, file.name!);
     }
-    pageToken = response.nextPageToken;
-  } while (pageToken);
+  }
 
   // --- ÉTAPE 2 : MUTATIONS (DELETE / UPLOAD) ---
   let bytesAddedInThisPush = 0;
@@ -75,13 +73,11 @@ async function syncFiles() {
       const filename = path.split("/").pop();
       const ext = filename?.split(".").pop()?.toLowerCase();
 
-      // Bypass spécifique pour les fichiers de conf internes
       if (filename === ".gerber-slug") {
         console.log(`⚠️  Fichier de configuration ignoré : ${path}`);
         continue;
       }
 
-      // Mapping des MIME types supportés pour un stockage long terme (Texte & PDF)
       const mimeTypes: Record<string, string> = {
         md: "text/markdown",
         txt: "text/plain",
@@ -109,17 +105,8 @@ async function syncFiles() {
         file: path,
         config: {
           mimeType: mimeType,
-          displayName: path.split("/").pop(),
+          displayName: encodeDisplayName(path),
         },
-      });
-
-      await ai.files.update({
-        name: uploadRes.name,
-        customMetadata: [
-          { key: "github_path", stringValue: path },
-          { key: "github_repo", stringValue: githubRepo },
-          { key: "vault_corpus", stringValue: corpusName }
-        ],
       });
 
       bytesAddedInThisPush += stats.size;
