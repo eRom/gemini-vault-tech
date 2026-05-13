@@ -1,0 +1,11 @@
+# Dans Projet-A/.github/workflows/vault.yml
+name: Vault
+on:
+  push:
+    paths: ["docs/**", ".cave/**"]
+jobs:
+  call-sync:
+    uses: eRom/gemini-vault-tech/.github/workflows/sync.yml@main
+    secrets:
+      VAULT_EMBED_API_KEY: ${{ secrets.VAULT_EMBED_API_KEY }}
+      VAULT_CORPUS_NAME: ${{ secrets.VAULT_CORPUS_NAME }}

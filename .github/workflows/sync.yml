@@ -1,0 +1,37 @@
+name: Reusable Gemini Sync
+on:
+  workflow_call:
+    secrets:
+      VAULT_EMBED_API_KEY:
+        required: true
+      VAULT_CORPUS_NAME:
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Fetch sync script
+        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync-gemini.ts -o sync-gemini.ts
+
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Install Dependencies
+        run: bun add @google/genai
+
+      - uses: tj-actions/changed-files@v42
+        id: changed-files
+
+      - name: Run Sync
+        env:
+          VAULT_EMBED_API_KEY: ${{ secrets.VAULT_EMBED_API_KEY }}
+          VAULT_CORPUS_NAME: ${{ secrets.VAULT_CORPUS_NAME }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ADDED_FILES: ${{ steps.changed-files.outputs.added_files }}
+          MODIFIED_FILES: ${{ steps.changed-files.outputs.modified_files }}
+          DELETED_FILES: ${{ steps.changed-files.outputs.deleted_files }}
+        run: bun run sync-gemini.ts
