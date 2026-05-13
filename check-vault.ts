@@ -5,8 +5,15 @@ if (!process.env.VAULT_EMBED_API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.VAULT_EMBED_API_KEY });
-// On récupère le repo actuel pour filtrer l'affichage (optionnel)
 const targetRepo = process.env.GITHUB_REPOSITORY;
+
+// Format displayName: "vault|{corpus}|{repo}|{path}"
+const parseDisplayName = (displayName?: string) => {
+  if (!displayName?.startsWith("vault|")) return null;
+  const parts = displayName.split("|");
+  if (parts.length !== 4) return null;
+  return { corpus: parts[1], repo: parts[2], path: parts[3] };
+};
 
 async function check() {
   console.log("🔍 Analyse de ton Vault global Gemini...");
@@ -14,29 +21,25 @@ async function check() {
     console.log(`📌 Filtre actif sur le repo : ${targetRepo}\n`);
   }
 
-  let pageToken: string | undefined;
   let count = 0;
+  const pager = await ai.files.list();
 
-  do {
-    const response = await ai.files.list({ pageSize: 100, pageToken });
-    const files = response.files || [];
+  for await (const f of pager) {
+    const meta = parseDisplayName(f.displayName);
 
-    for (const f of files) {
-      const repo = f.customMetadata?.find((m) => m.key === "github_repo")?.stringValue;
-      const corpus = f.customMetadata?.find((m) => m.key === "vault_corpus")?.stringValue;
-      const path = f.customMetadata?.find((m) => m.key === "github_path")?.stringValue;
+    if (targetRepo && meta?.repo !== targetRepo) continue;
 
-      // Si GITHUB_REPOSITORY est défini, on ne montre que les fichiers de ce repo
-      if (targetRepo && repo !== targetRepo) continue;
-
-      count++;
-      console.log(`📄 [${corpus || 'no-corpus'}] ${f.displayName}`);
-      console.log(`   ↳ Repo   : ${repo || 'inconnu'}`);
-      console.log(`   ↳ Path   : ${path || 'aucun'}`);
+    count++;
+    if (meta) {
+      console.log(`📄 [${meta.corpus}] ${meta.path}`);
+      console.log(`   ↳ Repo   : ${meta.repo}`);
+      console.log(`   ↳ ID     : ${f.name}\n`);
+    } else {
+      // Fichier sans metadata vault (uploadé avant la migration)
+      console.log(`📄 [legacy] ${f.displayName}`);
       console.log(`   ↳ ID     : ${f.name}\n`);
     }
-    pageToken = response.nextPageToken;
-  } while (pageToken);
+  }
 
   console.log(`✨ Total : ${count} fichiers trouvés.`);
 }
