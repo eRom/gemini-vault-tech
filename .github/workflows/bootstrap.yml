@@ -1,0 +1,50 @@
+name: Reusable Gemini Bootstrap (Full Sync)
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: 'Chemins à inclure (séparés par des espaces). Défaut : tout le repo.'
+        required: false
+        default: '.'
+        type: string
+    secrets:
+      VAULT_EMBED_API_KEY:
+        required: true
+      VAULT_CORPUS_NAME:
+        required: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sync script
+        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync-gemini.ts -o sync-gemini.ts
+
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Install Dependencies
+        run: bun add @google/genai
+
+      - name: List all tracked files
+        id: all-files
+        env:
+          INPUT_PATHS: ${{ inputs.paths }}
+        run: |
+          if [ "$INPUT_PATHS" = "." ]; then
+            FILES=$(git ls-files | tr '\n' ' ')
+          else
+            FILES=$(git ls-files $INPUT_PATHS | tr '\n' ' ')
+          fi
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+
+      - name: Run Full Sync
+        env:
+          VAULT_EMBED_API_KEY: ${{ secrets.VAULT_EMBED_API_KEY }}
+          VAULT_CORPUS_NAME: ${{ secrets.VAULT_CORPUS_NAME }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ADDED_FILES: ""
+          MODIFIED_FILES: ${{ steps.all-files.outputs.files }}
+          DELETED_FILES: ""
+        run: bun run sync-gemini.ts
