@@ -43,14 +43,16 @@ async function syncFiles() {
   let totalVaultSizeBytes = 0;
 
   console.log(`🔍 Analyse du Vault [${corpusName}] pour le repo [${githubRepo}]...`);
-  const pager = await ai.files.list();
-  for (const file of pager) {
+  const pager = ai.files.list();
+  console.log(`[debug] pager type=${typeof pager} ctor=${(pager as any)?.constructor?.name} keys=${Object.keys(pager as any).slice(0, 8).join(',')}`);
+  for await (const file of pager as any) {
     const meta = parseDisplayName(file.displayName);
     if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
       totalVaultSizeBytes += Number(file.sizeBytes || 0);
       existingFiles.set(meta.path, file.name!);
     }
   }
+  console.log(`[debug] list done, existingFiles=${existingFiles.size}`);
 
   // --- ÉTAPE 2 : MUTATIONS (DELETE / UPLOAD) ---
   let bytesAddedInThisPush = 0;
