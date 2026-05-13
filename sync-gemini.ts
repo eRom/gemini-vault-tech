@@ -72,10 +72,35 @@ async function syncFiles() {
     console.log(`🚀 Upload en cours : ${path}`);
     try {
       const stats = fs.statSync(path);
+      const ext = path.split(".").pop()?.toLowerCase();
+
+      // Mapping des MIME types supportés pour un stockage long terme (Texte & PDF)
+      const mimeTypes: Record<string, string> = {
+        md: "text/markdown",
+        txt: "text/plain",
+        json: "application/json",
+        jsonl: "application/json",
+        pdf: "application/pdf",
+        ts: "text/plain",
+        js: "text/plain",
+        py: "text/plain",
+        rs: "text/plain",
+        csv: "text/csv",
+        xml: "text/xml",
+        yml: "text/plain",
+        yaml: "text/plain",
+      };
+
+      const mimeType = mimeTypes[ext || ""];
+
+      if (!mimeType) {
+        console.log(`⚠️  Fichier ignoré (format non supporté ou binaire) : ${path}`);
+        continue;
+      }
 
       const uploadRes = await ai.files.upload({
         file: path,
-        mimeType: path.endsWith(".md") ? "text/markdown" : "text/plain",
+        mimeType: mimeType,
         displayName: path.split("/").pop(),
       });
 
@@ -89,7 +114,7 @@ async function syncFiles() {
       });
 
       bytesAddedInThisPush += stats.size;
-      console.log(`✅ Succès : ${path} indexé sous ${uploadRes.name}`);
+      console.log(`✅ Succès : ${path} indexé sous ${uploadRes.name} (${mimeType})`);
     } catch (e) {
       console.error(`❌ Erreur d'upload sur ${path}:`, e);
     }
