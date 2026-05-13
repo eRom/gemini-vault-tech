@@ -72,7 +72,14 @@ async function syncFiles() {
     console.log(`🚀 Upload en cours : ${path}`);
     try {
       const stats = fs.statSync(path);
-      const ext = path.split(".").pop()?.toLowerCase();
+      const filename = path.split("/").pop();
+      const ext = filename?.split(".").pop()?.toLowerCase();
+
+      // Bypass spécifique pour les fichiers de conf internes
+      if (filename === ".gerber-slug") {
+        console.log(`⚠️  Fichier de configuration ignoré : ${path}`);
+        continue;
+      }
 
       // Mapping des MIME types supportés pour un stockage long terme (Texte & PDF)
       const mimeTypes: Record<string, string> = {
