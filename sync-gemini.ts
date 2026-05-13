@@ -43,7 +43,8 @@ async function syncFiles() {
   let totalVaultSizeBytes = 0;
 
   console.log(`🔍 Analyse du Vault [${corpusName}] pour le repo [${githubRepo}]...`);
-  for await (const file of ai.files.list()) {
+  const pager = await ai.files.list();
+  for (const file of pager) {
     const meta = parseDisplayName(file.displayName);
     if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
       totalVaultSizeBytes += Number(file.sizeBytes || 0);
