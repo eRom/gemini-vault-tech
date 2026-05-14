@@ -137,29 +137,29 @@ async function syncFiles() {
   let bytesAddedInThisPush = 0;
   let successCount = 0;
 
-  // Extensions supportées (PDF inclus, natif côté FileSearchStore)
-  const supportedExts = new Set([
-    "md",
-    "txt",
-    "json",
-    "jsonl",
-    "pdf",
-    "ts",
-    "tsx",
-    "js",
-    "jsx",
-    "py",
-    "rs",
-    "go",
-    "csv",
-    "xml",
-    "yml",
-    "yaml",
-    "html",
-    "css",
-    "sh",
-    "toml",
-  ]);
+  // MIME map (le SDK n'auto-détecte pas le mimeType pour uploadToFileSearchStore)
+  const mimeTypes: Record<string, string> = {
+    md: "text/markdown",
+    txt: "text/plain",
+    json: "application/json",
+    jsonl: "application/json",
+    pdf: "application/pdf",
+    ts: "text/plain",
+    tsx: "text/plain",
+    js: "text/plain",
+    jsx: "text/plain",
+    py: "text/plain",
+    rs: "text/plain",
+    go: "text/plain",
+    csv: "text/csv",
+    xml: "text/xml",
+    yml: "text/plain",
+    yaml: "text/plain",
+    html: "text/html",
+    css: "text/css",
+    sh: "text/plain",
+    toml: "text/plain",
+  };
 
   for (const path of toUpload) {
     const filename = path.split("/").pop() || "";
@@ -170,7 +170,8 @@ async function syncFiles() {
       continue;
     }
 
-    if (!supportedExts.has(ext)) {
+    const mimeType = mimeTypes[ext];
+    if (!mimeType) {
       console.log(`⚠️  Fichier ignoré (extension non supportée) : ${path}`);
       continue;
     }
@@ -183,6 +184,7 @@ async function syncFiles() {
         file: path,
         fileSearchStoreName: storeName,
         config: {
+          mimeType,
           displayName: encodeDisplayName(path),
           customMetadata: buildCustomMetadata(path),
         },
