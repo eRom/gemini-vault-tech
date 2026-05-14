@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fetch sync script
-        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync-gemini-dual.ts -o sync-gemini-dual.ts
+        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync.ts -o sync.ts
 
       - uses: oven-sh/setup-bun@v1
 
@@ -49,4 +49,4 @@ jobs:
           ADDED_FILES: ""
           MODIFIED_FILES: ${{ steps.all-files.outputs.files }}
           DELETED_FILES: ""
-        run: bun run sync-gemini-dual.ts
+        run: bun run sync.ts

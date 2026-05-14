@@ -6,10 +6,9 @@ if (!process.env.VAULT_EMBED_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.VAULT_EMBED_API_KEY });
 const targetRepo = process.env.GITHUB_REPOSITORY;
-// Nécessaire pour scanner le RAG (un FileSearchStore = un corpus)
 const corpusName = process.env.VAULT_CORPUS_NAME;
 
-// Format displayName: "vault|{corpus}|{repo}|{path}"
+// Fallback : parse repo/path depuis displayName legacy
 const parseDisplayName = (displayName?: string) => {
   if (!displayName?.startsWith("vault|")) return null;
   const parts = displayName.split("|");
@@ -17,121 +16,73 @@ const parseDisplayName = (displayName?: string) => {
   return { corpus: parts[1], repo: parts[2], path: parts[3] };
 };
 
-// État consolidé d'un fichier (présent dans Files API et/ou FileSearchStore)
-interface VaultEntry {
-  corpus: string;
-  repo: string;
-  path: string;
-  fileId?: string;
-  docId?: string;
-}
-
-// Cherche le FileSearchStore par displayName (sans le créer)
-async function findStore(): Promise<string | null> {
-  if (!corpusName) return null;
-  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
-  for await (const store of pager) {
-    if (store.displayName === corpusName) {
-      return store.name!;
+const extractMeta = (doc: any) => {
+  let repo: string | undefined;
+  let path: string | undefined;
+  let corpus: string | undefined;
+  for (const m of doc.customMetadata || []) {
+    if (m.key === "repo") repo = m.stringValue;
+    if (m.key === "path") path = m.stringValue;
+    if (m.key === "corpus") corpus = m.stringValue;
+  }
+  if (!repo || !path) {
+    const legacy = parseDisplayName(doc.displayName);
+    if (legacy) {
+      repo = repo || legacy.repo;
+      path = path || legacy.path;
+      corpus = corpus || legacy.corpus;
     }
   }
-  return null;
-}
+  return { repo, path, corpus };
+};
 
 async function check() {
-  console.log("🔍 Analyse de ton Vault hybride Gemini...");
-  if (targetRepo) console.log(`📌 Filtre actif sur le repo : ${targetRepo}`);
-  if (!corpusName)
-    console.log(
-      `⚠️  VAULT_CORPUS_NAME non défini : l'analyse du Vector Store (RAG) sera ignorée.`,
-    );
+  console.log("🔍 Analyse du Vault RAG (FileSearchStores)...");
+  if (targetRepo) console.log(`📌 Filtre repo : ${targetRepo}`);
+  if (corpusName) console.log(`📌 Filtre corpus : ${corpusName}`);
   console.log("");
 
-  const entries = new Map<string, VaultEntry>();
-  const legacyFiles: { name: string; displayName: string }[] = [];
-
-  // --- 1. Scan de la Files API (Stuffing Store) ---
-  const filePager = await ai.files.list();
-  for await (const f of filePager) {
-    const meta = parseDisplayName(f.displayName);
-
-    if (meta) {
-      if (targetRepo && meta.repo !== targetRepo) continue;
-
-      const key = `${meta.corpus}|${meta.repo}|${meta.path}`;
-      if (!entries.has(key)) entries.set(key, { ...meta });
-
-      entries.get(key)!.fileId = f.name;
-    } else {
-      // Les fichiers legacy n'ont pas la structure "vault|"
-      if (!targetRepo) {
-        legacyFiles.push({
-          name: f.name!,
-          displayName: f.displayName || "(sans nom)",
-        });
-      }
-    }
+  const stores: { name: string; displayName: string }[] = [];
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  for await (const s of pager) {
+    if (corpusName && s.displayName !== corpusName) continue;
+    stores.push({ name: s.name!, displayName: s.displayName || "(sans nom)" });
   }
 
-  // --- 2. Scan du FileSearchStore (Vector RAG Store) ---
-  if (corpusName) {
-    const storeName = await findStore();
-    if (!storeName) {
-      console.log(
-        `⚠️  Aucun FileSearchStore avec le displayName "${corpusName}" trouvé.\n`,
-      );
-    } else {
-      try {
-        const docPager = await ai.fileSearchStores.documents.list({
-          parent: storeName,
-          config: { pageSize: 100 },
-        });
-        for await (const d of docPager) {
-          const meta = parseDisplayName(d.displayName);
+  if (stores.length === 0) {
+    console.log("🤷 Aucun FileSearchStore trouvé.");
+    return;
+  }
 
-          if (meta) {
-            if (targetRepo && meta.repo !== targetRepo) continue;
+  let totalDocs = 0;
+  let totalMatched = 0;
 
-            const key = `${meta.corpus}|${meta.repo}|${meta.path}`;
-            if (!entries.has(key)) entries.set(key, { ...meta });
-
-            entries.get(key)!.docId = d.name;
-          }
-        }
-      } catch (e: any) {
+  for (const store of stores) {
+    console.log(`📦 Store : ${store.displayName}  (${store.name})`);
+    try {
+      const docPager = await ai.fileSearchStores.documents.list({
+        parent: store.name,
+        config: { pageSize: 100 },
+      });
+      let storeMatched = 0;
+      for await (const doc of docPager) {
+        totalDocs++;
+        const meta = extractMeta(doc);
+        if (targetRepo && meta.repo !== targetRepo) continue;
+        storeMatched++;
+        totalMatched++;
         console.log(
-          `⚠️  Impossible de lire le FileSearchStore (${corpusName}) : ${e.message}\n`,
+          `   ↳ [${meta.repo || "?"}] ${meta.path || doc.displayName || doc.name}`,
         );
       }
+      console.log(`   ↳ ${storeMatched} document(s) matché(s) dans ce store.\n`);
+    } catch (e: any) {
+      console.log(`   ⚠️  Lecture impossible : ${e.message}\n`);
     }
-  }
-
-  // --- 3. Affichage consolidé ---
-  let count = 0;
-
-  for (const [, entry] of entries) {
-    count++;
-    console.log(`📄 [${entry.corpus}] ${entry.path}`);
-    console.log(`   ↳ Repo   : ${entry.repo}`);
-
-    const fileStatus = entry.fileId
-      ? `✅ Actif (${entry.fileId})`
-      : `❌ Absent`;
-    console.log(`   ↳ File   : ${fileStatus}`);
-
-    const ragStatus = entry.docId ? `✅ Actif (${entry.docId})` : `❌ Absent`;
-    console.log(`   ↳ RAG    : ${ragStatus}\n`);
-  }
-
-  for (const leg of legacyFiles) {
-    count++;
-    console.log(`📄 [legacy] ${leg.displayName}`);
-    console.log(`   ↳ File   : ✅ Actif (${leg.name})`);
-    console.log(`   ↳ RAG    : ❌ Non applicable\n`);
   }
 
   console.log(
-    `✨ Total : ${count} éléments uniques trouvés dans le(s) système(s).`,
+    `✨ Total : ${totalMatched} document(s) matché(s) sur ${totalDocs} dans ${stores.length} store(s).`,
   );
 }
 

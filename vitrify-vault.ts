@@ -15,15 +15,9 @@ async function vitrifyVault() {
   console.log(`☢️  PROCÉDURE DE VITRIFICATION (RESET TOTAL) ☢️`);
 
   if (dryRun) {
-    console.log(
-      "⚠️  MODE DRY-RUN : Simulation uniquement. Rien ne sera supprimé.",
-    );
-    console.log(
-      "👉 Pour exécuter réellement : bun run vitrify-vault.ts --confirm",
-    );
-    console.log(
-      "👉 Pour supprimer aussi les stores : --confirm --wipe-stores\n",
-    );
+    console.log("⚠️  MODE DRY-RUN : Simulation uniquement.");
+    console.log("👉 Pour exécuter : bun run vitrify-vault.ts --confirm");
+    console.log("👉 Pour supprimer aussi les stores : --confirm --wipe-stores\n");
   } else {
     console.log("🔥 MODE DESTRUCTION ACTIVÉ.");
     if (wipeStores)
@@ -31,32 +25,23 @@ async function vitrifyVault() {
     else console.log("");
   }
 
-  const filesToDelete: { name: string; displayName: string }[] = [];
+  const stores: { name: string; displayName: string }[] = [];
   const docsToDelete: {
     name: string;
     displayName: string;
     storeName: string;
   }[] = [];
-  const stores: { name: string; displayName: string }[] = [];
 
-  // --- 1. Râtissage de la Files API ---
-  console.log("🔍 Scan de la Files API globale...");
-  const filePager = await ai.files.list();
-  for await (const f of filePager) {
-    filesToDelete.push({
-      name: f.name!,
-      displayName: f.displayName || "(sans nom)",
-    });
-  }
-
-  // --- 2. Râtissage des FileSearchStores ---
   console.log("🔍 Scan des FileSearchStores...");
   try {
     const storePager = await ai.fileSearchStores.list({
       config: { pageSize: 100 },
     });
     for await (const s of storePager) {
-      stores.push({ name: s.name!, displayName: s.displayName || "(sans nom)" });
+      stores.push({
+        name: s.name!,
+        displayName: s.displayName || "(sans nom)",
+      });
       try {
         const docPager = await ai.fileSearchStores.documents.list({
           parent: s.name!,
@@ -77,14 +62,13 @@ async function vitrifyVault() {
     console.log(`   ↳ Scan stores échoué : ${e.message}`);
   }
 
-  // --- 3. Bilan ---
   console.log(`\n📊 Bilan des cibles :`);
-  console.log(`   - Fichiers à détruire (Stuffing) : ${filesToDelete.length}`);
-  console.log(`   - Documents à détruire (RAG)     : ${docsToDelete.length}`);
-  console.log(`   - Stores détectés                : ${stores.length}`);
+  console.log(`   - Documents à détruire (RAG) : ${docsToDelete.length}`);
+  console.log(`   - Stores détectés            : ${stores.length}`);
+  if (wipeStores)
+    console.log(`   - Stores à supprimer         : ${stores.length}`);
 
   if (
-    filesToDelete.length === 0 &&
     docsToDelete.length === 0 &&
     (!wipeStores || stores.length === 0)
   ) {
@@ -97,26 +81,14 @@ async function vitrifyVault() {
     return;
   }
 
-  // --- 4. Exécution (Point de non-retour) ---
   console.log("\n🚀 Démarrage de l'annihilation...");
-
-  for (const f of filesToDelete) {
-    try {
-      await ai.files.delete({ name: f.name });
-      console.log(`✅ [File] Atomisé : ${f.displayName}`);
-    } catch (e: any) {
-      console.error(`❌ [File] Résistance sur ${f.displayName} : ${e.message}`);
-    }
-  }
 
   for (const d of docsToDelete) {
     try {
       await ai.fileSearchStores.documents.delete({ name: d.name });
       console.log(`✅ [RAG]  Atomisé : [${d.storeName}] ${d.displayName}`);
     } catch (e: any) {
-      console.error(
-        `❌ [RAG]  Résistance sur ${d.displayName} : ${e.message}`,
-      );
+      console.error(`❌ [RAG]  Résistance sur ${d.displayName} : ${e.message}`);
     }
   }
 
