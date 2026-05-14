@@ -1,0 +1,12 @@
+name: Vault Bootstrap
+on:
+  workflow_dispatch: {}
+
+jobs:
+  bootstrap:
+    uses: eRom/gemini-vault-tech/.github/workflows/bootstrap.yml@main
+    secrets:
+      VAULT_EMBED_API_KEY: ${{ secrets.VAULT_EMBED_API_KEY }}
+      VAULT_CORPUS_NAME: ${{ secrets.VAULT_CORPUS_NAME }}
+    with:
+      paths: "docs .cave"
