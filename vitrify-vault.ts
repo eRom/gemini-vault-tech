@@ -35,7 +35,7 @@ async function vitrifyVault() {
   console.log("🔍 Scan des FileSearchStores...");
   try {
     const storePager = await ai.fileSearchStores.list({
-      config: { pageSize: 100 },
+      config: { pageSize: 20 },
     });
     for await (const s of storePager) {
       stores.push({
@@ -45,7 +45,7 @@ async function vitrifyVault() {
       try {
         const docPager = await ai.fileSearchStores.documents.list({
           parent: s.name!,
-          config: { pageSize: 100 },
+          config: { pageSize: 20 },
         });
         for await (const d of docPager) {
           docsToDelete.push({
@@ -85,7 +85,10 @@ async function vitrifyVault() {
 
   for (const d of docsToDelete) {
     try {
-      await ai.fileSearchStores.documents.delete({ name: d.name });
+      await ai.fileSearchStores.documents.delete({
+        name: d.name,
+        config: { force: true },
+      });
       console.log(`✅ [RAG]  Atomisé : [${d.storeName}] ${d.displayName}`);
     } catch (e: any) {
       console.error(`❌ [RAG]  Résistance sur ${d.displayName} : ${e.message}`);
@@ -95,7 +98,10 @@ async function vitrifyVault() {
   if (wipeStores) {
     for (const s of stores) {
       try {
-        await ai.fileSearchStores.delete({ name: s.name });
+        await ai.fileSearchStores.delete({
+          name: s.name,
+          config: { force: true },
+        });
         console.log(`✅ [Store] Atomisé : ${s.displayName}`);
       } catch (e: any) {
         console.error(

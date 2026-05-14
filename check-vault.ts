@@ -43,7 +43,7 @@ async function check() {
   console.log("");
 
   const stores: { name: string; displayName: string }[] = [];
-  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 20 } });
   for await (const s of pager) {
     if (corpusName && s.displayName !== corpusName) continue;
     stores.push({ name: s.name!, displayName: s.displayName || "(sans nom)" });
@@ -62,7 +62,7 @@ async function check() {
     try {
       const docPager = await ai.fileSearchStores.documents.list({
         parent: store.name,
-        config: { pageSize: 100 },
+        config: { pageSize: 20 },
       });
       let storeMatched = 0;
       for await (const doc of docPager) {

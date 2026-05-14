@@ -18,7 +18,7 @@ const encodeDisplayName = (path: string) =>
 
 // Trouve ou crée le FileSearchStore correspondant au corpus
 async function getOrCreateStore(): Promise<string> {
-  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 20 } });
   for await (const store of pager) {
     if (store.displayName === corpusName) {
       return store.name!;
@@ -91,7 +91,7 @@ async function syncFiles() {
   try {
     const docPager = await ai.fileSearchStores.documents.list({
       parent: storeName,
-      config: { pageSize: 100 },
+      config: { pageSize: 20 },
     });
     for await (const doc of docPager) {
       let docRepo: string | undefined;
@@ -123,7 +123,10 @@ async function syncFiles() {
     if (docId) {
       console.log(`💥 Suppression de l'ancienne version : ${path}`);
       try {
-        await ai.fileSearchStores.documents.delete({ name: docId });
+        await ai.fileSearchStores.documents.delete({
+          name: docId,
+          config: { force: true },
+        });
       } catch (e: any) {
         console.error(`❌ Échec suppression ${path} : ${e.message}`);
       }

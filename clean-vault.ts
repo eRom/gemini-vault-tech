@@ -34,7 +34,7 @@ const extractMeta = (doc: any) => {
 };
 
 async function findStore(displayName: string): Promise<string | null> {
-  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 20 } });
   for await (const s of pager) {
     if (s.displayName === displayName) return s.name!;
   }
@@ -66,7 +66,7 @@ async function cleanVault() {
   try {
     const docPager = await ai.fileSearchStores.documents.list({
       parent: storeName,
-      config: { pageSize: 100 },
+      config: { pageSize: 20 },
     });
     for await (const d of docPager) {
       const meta = extractMeta(d);
@@ -99,7 +99,10 @@ async function cleanVault() {
   console.log("\n🚀 Exécution de la purge...");
   for (const d of docsToDelete) {
     try {
-      await ai.fileSearchStores.documents.delete({ name: d.name });
+      await ai.fileSearchStores.documents.delete({
+        name: d.name,
+        config: { force: true },
+      });
       console.log(`✅ Supprimé : ${d.path}`);
     } catch (e: any) {
       console.error(`❌ Échec sur ${d.path} : ${e.message}`);

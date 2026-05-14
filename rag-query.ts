@@ -39,7 +39,7 @@ const parseDisplayName = (displayName?: string) => {
 };
 
 async function findStore(): Promise<string> {
-  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 20 } });
   for await (const store of pager) {
     if (store.displayName === corpusName) {
       return store.name!;
