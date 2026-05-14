@@ -13,6 +13,7 @@ if (!corpusName) {
 
 const rawArgs = process.argv.slice(2);
 const jsonOutput = rawArgs.includes("--json");
+const agentOutput = rawArgs.includes("--agent");
 const repoFilter = (() => {
   const idx = rawArgs.indexOf("--repo");
   return idx >= 0 ? rawArgs[idx + 1] : undefined;
@@ -20,6 +21,7 @@ const repoFilter = (() => {
 const question = rawArgs
   .filter((a, i, arr) => {
     if (a === "--json") return false;
+    if (a === "--agent") return false;
     if (a === "--repo") return false;
     if (i > 0 && arr[i - 1] === "--repo") return false;
     return true;
@@ -27,7 +29,11 @@ const question = rawArgs
   .join(" ");
 
 if (!question) {
-  console.log("Utilisation : bun run rag-query.ts 'Ta question' [--repo owner/name] [--json]");
+  console.log(
+    "Utilisation : bun run rag-query.ts 'Ta question' [--repo owner/name] [--json | --agent]",
+  );
+  console.log("  --json   : sortie structurée complète (answer + sources)");
+  console.log("  --agent  : sortie minimale { question, sources: [{repo, path}] }");
   process.exit(1);
 }
 
@@ -120,7 +126,7 @@ function extractSources(response: any): Source[] {
 }
 
 async function queryRag() {
-  if (!jsonOutput) {
+  if (!jsonOutput && !agentOutput) {
     console.log(
       `📡 [MODE RADAR] Scan vectoriel (Store: ${corpusName}${repoFilter ? `, repo: ${repoFilter}` : ""})...`,
     );
@@ -128,7 +134,11 @@ async function queryRag() {
 
   const storeName = await findStore();
 
-  const userInstructions = `Tu es mon architecte technique.
+  // En mode --agent : prompt court pour minimiser les tokens de génération.
+  // Le grounding tool retrieve quand même (basé sur la question).
+  const userInstructions = agentOutput
+    ? `Liste les documents les plus pertinents pour répondre à : ${question}`
+    : `Tu es mon architecte technique.
 Réponds à la question en cherchant STRICTEMENT dans ton outil de recherche de documents.
 Cite TOUJOURS tes sources avec le nom exact du fichier.
 ${repoFilter ? `Filtre tes recherches sur le repo : ${repoFilter}.` : ""}
@@ -141,6 +151,7 @@ Question : ${question}`;
     contents: [{ role: "user", parts: [{ text: userInstructions }] }],
     config: {
       tools: [{ fileSearch: { fileSearchStoreNames: [storeName] } }],
+      ...(agentOutput ? { maxOutputTokens: 256 } : {}),
     },
   });
 
@@ -149,13 +160,32 @@ Question : ${question}`;
     sources = sources.filter((s) => !s.repo || s.repo === repoFilter);
   }
 
+  // --- Mode --agent : sortie minimale (question + sources réduites à repo+path) ---
+  if (agentOutput) {
+    const agentSources = sources
+      .filter((s) => s.repo && s.path)
+      .map((s) => ({ repo: s.repo!, path: s.path! }));
+    // Dédupe par repo+path
+    const seen = new Set<string>();
+    const dedup = agentSources.filter((s) => {
+      const key = `${s.repo}|${s.path}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    console.log(JSON.stringify({ question, sources: dedup }, null, 2));
+    return;
+  }
+
   const answer = response.text || "";
 
+  // --- Mode --json : sortie complète ---
   if (jsonOutput) {
     console.log(JSON.stringify({ question, answer, sources }, null, 2));
     return;
   }
 
+  // --- Mode humain ---
   console.log("\n══════════════════════════════════\n");
   console.log(answer);
   console.log("\n══════════════════════════════════");
@@ -171,7 +201,7 @@ Question : ${question}`;
     console.log("\n🤷 Aucune source citée (réponse non-grounded).");
   }
   console.log(
-    "\n💡 Ajoute --json pour piper vers un outil de fetch GitHub.",
+    "\n💡 Ajoute --json (complet) ou --agent (sources only) pour piper.",
   );
 }
 
