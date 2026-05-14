@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 2
 
       - name: Fetch sync script
-        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync-gemini.ts -o sync-gemini.ts
+        run: curl -sL https://raw.githubusercontent.com/eRom/gemini-vault-tech/main/sync-gemini-dual.ts -o sync-gemini-dual.ts
 
       - uses: oven-sh/setup-bun@v1
 
@@ -36,4 +36,4 @@ jobs:
           ADDED_FILES: ${{ steps.changed-files.outputs.added_files }}
           MODIFIED_FILES: ${{ steps.changed-files.outputs.modified_files }}
           DELETED_FILES: ${{ steps.changed-files.outputs.deleted_files }}
-        run: bun run sync-gemini.ts
+        run: bun run sync-gemini-dual.ts
