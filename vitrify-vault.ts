@@ -5,10 +5,11 @@ if (!process.env.VAULT_EMBED_API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.VAULT_EMBED_API_KEY });
-const corpusName = process.env.VAULT_CORPUS_NAME;
 
-// Le flag de sécurité
+// Flag de sécurité
 const dryRun = !process.argv.includes("--confirm");
+// Mode encore plus radical : supprimer aussi les FileSearchStores eux-mêmes
+const wipeStores = process.argv.includes("--wipe-stores");
 
 async function vitrifyVault() {
   console.log(`☢️  PROCÉDURE DE VITRIFICATION (RESET TOTAL) ☢️`);
@@ -18,51 +19,75 @@ async function vitrifyVault() {
       "⚠️  MODE DRY-RUN : Simulation uniquement. Rien ne sera supprimé.",
     );
     console.log(
-      "👉 Pour exécuter réellement : bun run vitrify-vault.ts --confirm\n",
+      "👉 Pour exécuter réellement : bun run vitrify-vault.ts --confirm",
+    );
+    console.log(
+      "👉 Pour supprimer aussi les stores : --confirm --wipe-stores\n",
     );
   } else {
-    console.log("🔥 MODE DESTRUCTION ACTIVÉ.\n");
+    console.log("🔥 MODE DESTRUCTION ACTIVÉ.");
+    if (wipeStores)
+      console.log("💀 Stores eux-mêmes inclus dans la destruction.\n");
+    else console.log("");
   }
 
   const filesToDelete: { name: string; displayName: string }[] = [];
-  const docsToDelete: { name: string; displayName: string }[] = [];
+  const docsToDelete: {
+    name: string;
+    displayName: string;
+    storeName: string;
+  }[] = [];
+  const stores: { name: string; displayName: string }[] = [];
 
-  // --- 1. Râtissage de l'API File (Toutes les sources) ---
-  console.log("🔍 Scan du File Store global...");
+  // --- 1. Râtissage de la Files API ---
+  console.log("🔍 Scan de la Files API globale...");
   const filePager = await ai.files.list();
   for await (const f of filePager) {
-    // On prend tout, avec ou sans le tag "vault|"
     filesToDelete.push({
       name: f.name!,
       displayName: f.displayName || "(sans nom)",
     });
   }
 
-  // --- 2. Râtissage de l'API Corpora (Vector RAG) ---
-  if (corpusName) {
-    console.log(`🔍 Scan du Vector Store (Corpus: ${corpusName})...`);
-    try {
-      const docPager = await ai.corpora.documents.list({
-        corpus: corpusName,
-        pageSize: 100,
-      });
-      for await (const d of docPager || []) {
-        docsToDelete.push({
-          name: d.name!,
-          displayName: d.displayName || "(sans nom)",
+  // --- 2. Râtissage des FileSearchStores ---
+  console.log("🔍 Scan des FileSearchStores...");
+  try {
+    const storePager = await ai.fileSearchStores.list({
+      config: { pageSize: 100 },
+    });
+    for await (const s of storePager) {
+      stores.push({ name: s.name!, displayName: s.displayName || "(sans nom)" });
+      try {
+        const docPager = await ai.fileSearchStores.documents.list({
+          parent: s.name!,
+          config: { pageSize: 100 },
         });
+        for await (const d of docPager) {
+          docsToDelete.push({
+            name: d.name!,
+            displayName: d.displayName || "(sans nom)",
+            storeName: s.displayName || s.name!,
+          });
+        }
+      } catch (e: any) {
+        console.log(`   ↳ Store ${s.displayName} illisible : ${e.message}`);
       }
-    } catch (e: any) {
-      console.log(`   ↳ (Corpus vide ou introuvable : ${e.message})`);
     }
+  } catch (e: any) {
+    console.log(`   ↳ Scan stores échoué : ${e.message}`);
   }
 
   // --- 3. Bilan ---
   console.log(`\n📊 Bilan des cibles :`);
   console.log(`   - Fichiers à détruire (Stuffing) : ${filesToDelete.length}`);
   console.log(`   - Documents à détruire (RAG)     : ${docsToDelete.length}`);
+  console.log(`   - Stores détectés                : ${stores.length}`);
 
-  if (filesToDelete.length === 0 && docsToDelete.length === 0) {
+  if (
+    filesToDelete.length === 0 &&
+    docsToDelete.length === 0 &&
+    (!wipeStores || stores.length === 0)
+  ) {
     console.log("\n✨ Le Vault est déjà totalement vierge.");
     return;
   }
@@ -84,17 +109,25 @@ async function vitrifyVault() {
     }
   }
 
-  if (corpusName) {
-    for (const d of docsToDelete) {
+  for (const d of docsToDelete) {
+    try {
+      await ai.fileSearchStores.documents.delete({ name: d.name });
+      console.log(`✅ [RAG]  Atomisé : [${d.storeName}] ${d.displayName}`);
+    } catch (e: any) {
+      console.error(
+        `❌ [RAG]  Résistance sur ${d.displayName} : ${e.message}`,
+      );
+    }
+  }
+
+  if (wipeStores) {
+    for (const s of stores) {
       try {
-        await ai.corpora.documents.delete({
-          corpus: corpusName,
-          document: d.name,
-        });
-        console.log(`✅ [RAG]  Atomisé : ${d.displayName}`);
+        await ai.fileSearchStores.delete({ name: s.name });
+        console.log(`✅ [Store] Atomisé : ${s.displayName}`);
       } catch (e: any) {
         console.error(
-          `❌ [RAG]  Résistance sur ${d.displayName} : ${e.message}`,
+          `❌ [Store] Résistance sur ${s.displayName} : ${e.message}`,
         );
       }
     }

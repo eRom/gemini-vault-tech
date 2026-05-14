@@ -6,7 +6,7 @@ if (!process.env.VAULT_EMBED_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.VAULT_EMBED_API_KEY });
 const targetRepo = process.env.GITHUB_REPOSITORY;
-// Nécessaire pour scanner le RAG (car l'API Corpora a besoin de cet ID)
+// Nécessaire pour scanner le RAG (un FileSearchStore = un corpus)
 const corpusName = process.env.VAULT_CORPUS_NAME;
 
 // Format displayName: "vault|{corpus}|{repo}|{path}"
@@ -17,13 +17,25 @@ const parseDisplayName = (displayName?: string) => {
   return { corpus: parts[1], repo: parts[2], path: parts[3] };
 };
 
-// Interface pour stocker l'état consolidé d'un fichier
+// État consolidé d'un fichier (présent dans Files API et/ou FileSearchStore)
 interface VaultEntry {
   corpus: string;
   repo: string;
   path: string;
   fileId?: string;
   docId?: string;
+}
+
+// Cherche le FileSearchStore par displayName (sans le créer)
+async function findStore(): Promise<string | null> {
+  if (!corpusName) return null;
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  for await (const store of pager) {
+    if (store.displayName === corpusName) {
+      return store.name!;
+    }
+  }
+  return null;
 }
 
 async function check() {
@@ -38,7 +50,7 @@ async function check() {
   const entries = new Map<string, VaultEntry>();
   const legacyFiles: { name: string; displayName: string }[] = [];
 
-  // --- 1. Scan de l'API File (Stuffing Store) ---
+  // --- 1. Scan de la Files API (Stuffing Store) ---
   const filePager = await ai.files.list();
   for await (const f of filePager) {
     const meta = parseDisplayName(f.displayName);
@@ -52,7 +64,6 @@ async function check() {
       entries.get(key)!.fileId = f.name;
     } else {
       // Les fichiers legacy n'ont pas la structure "vault|"
-      // On ne les affiche que si on ne filtre pas par repo spécifique
       if (!targetRepo) {
         legacyFiles.push({
           name: f.name!,
@@ -62,47 +73,52 @@ async function check() {
     }
   }
 
-  // --- 2. Scan de l'API Corpora (Vector RAG Store) ---
+  // --- 2. Scan du FileSearchStore (Vector RAG Store) ---
   if (corpusName) {
-    try {
-      const docPager = await ai.corpora.documents.list({
-        corpus: corpusName,
-        pageSize: 100,
-      });
-      for await (const d of docPager || []) {
-        const meta = parseDisplayName(d.displayName);
-
-        if (meta) {
-          if (targetRepo && meta.repo !== targetRepo) continue;
-
-          const key = `${meta.corpus}|${meta.repo}|${meta.path}`;
-          if (!entries.has(key)) entries.set(key, { ...meta });
-
-          entries.get(key)!.docId = d.name;
-        }
-      }
-    } catch (e: any) {
+    const storeName = await findStore();
+    if (!storeName) {
       console.log(
-        `⚠️  Impossible de lire le Corpus RAG (${corpusName}) : ${e.message}\n`,
+        `⚠️  Aucun FileSearchStore avec le displayName "${corpusName}" trouvé.\n`,
       );
+    } else {
+      try {
+        const docPager = await ai.fileSearchStores.documents.list({
+          parent: storeName,
+          config: { pageSize: 100 },
+        });
+        for await (const d of docPager) {
+          const meta = parseDisplayName(d.displayName);
+
+          if (meta) {
+            if (targetRepo && meta.repo !== targetRepo) continue;
+
+            const key = `${meta.corpus}|${meta.repo}|${meta.path}`;
+            if (!entries.has(key)) entries.set(key, { ...meta });
+
+            entries.get(key)!.docId = d.name;
+          }
+        }
+      } catch (e: any) {
+        console.log(
+          `⚠️  Impossible de lire le FileSearchStore (${corpusName}) : ${e.message}\n`,
+        );
+      }
     }
   }
 
   // --- 3. Affichage consolidé ---
   let count = 0;
 
-  for (const [key, entry] of entries) {
+  for (const [, entry] of entries) {
     count++;
     console.log(`📄 [${entry.corpus}] ${entry.path}`);
     console.log(`   ↳ Repo   : ${entry.repo}`);
 
-    // Status File Store
     const fileStatus = entry.fileId
       ? `✅ Actif (${entry.fileId})`
       : `❌ Absent`;
     console.log(`   ↳ File   : ${fileStatus}`);
 
-    // Status Vector Store (RAG)
     const ragStatus = entry.docId ? `✅ Actif (${entry.docId})` : `❌ Absent`;
     console.log(`   ↳ RAG    : ${ragStatus}\n`);
   }

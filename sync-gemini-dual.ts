@@ -22,6 +22,35 @@ const parseDisplayName = (displayName?: string) => {
   return { corpus: parts[1], repo: parts[2], path: parts[3] };
 };
 
+// Trouve ou crée le FileSearchStore pour ce corpus (un store = un corpus)
+async function getOrCreateStore(): Promise<string> {
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  for await (const store of pager) {
+    if (store.displayName === corpusName) {
+      return store.name!;
+    }
+  }
+  console.log(`🆕 Création du FileSearchStore [${corpusName}]...`);
+  const created = await ai.fileSearchStores.create({
+    config: { displayName: corpusName },
+  });
+  return created.name!;
+}
+
+// Polling d'une opération longue (LRO)
+async function awaitOperation(op: any): Promise<any> {
+  while (!op.done) {
+    await new Promise((r) => setTimeout(r, 2000));
+    op = await ai.operations.get({ operation: op });
+  }
+  if (op.error) {
+    throw new Error(
+      `LRO failed: ${op.error.message || JSON.stringify(op.error)}`,
+    );
+  }
+  return op;
+}
+
 async function syncFiles() {
   const parseList = (envVar?: string) =>
     envVar?.split(" ").filter(Boolean) || [];
@@ -38,18 +67,22 @@ async function syncFiles() {
     return;
   }
 
-  // --- ÉTAPE 1 : ANALYSE DES DEUX BASES (FILES + CORPORA) ---
+  // --- ÉTAPE 0 : RÉSOLUTION DU FILE SEARCH STORE ---
+  const storeName = await getOrCreateStore();
+  console.log(`📦 Store actif : ${storeName}`);
+
+  // --- ÉTAPE 1 : ANALYSE DES DEUX BASES (FILES + STORE) ---
   const existingFiles = new Map<string, string>();
-  const existingCorpusDocs = new Map<string, string>();
+  const existingDocs = new Map<string, string>();
   let totalVaultSizeBytes = 0;
 
   console.log(
-    `🔍 Analyse du Vault et du Corpus [${corpusName}] pour le repo [${githubRepo}]...`,
+    `🔍 Analyse du Vault et du Store [${corpusName}] pour le repo [${githubRepo}]...`,
   );
 
-  // 1A. Analyse API File (Stuffing)
-  const pager = await ai.files.list();
-  for await (const file of pager) {
+  // 1A. Analyse Files API (Stuffing)
+  const filePager = await ai.files.list();
+  for await (const file of filePager) {
     const meta = parseDisplayName(file.displayName);
     if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
       totalVaultSizeBytes += Number(file.sizeBytes || 0);
@@ -57,21 +90,21 @@ async function syncFiles() {
     }
   }
 
-  // 1B. Analyse API Corpora (RAG Managé)
+  // 1B. Analyse FileSearchStore (RAG managé)
   try {
-    const corpusDocs = await ai.corpora.documents.list({
-      corpus: corpusName,
-      pageSize: 100,
+    const docPager = await ai.fileSearchStores.documents.list({
+      parent: storeName,
+      config: { pageSize: 100 },
     });
-    for await (const doc of corpusDocs || []) {
+    for await (const doc of docPager) {
       const meta = parseDisplayName(doc.displayName);
       if (meta && meta.repo === githubRepo && meta.corpus === corpusName) {
-        existingCorpusDocs.set(meta.path, doc.name!);
+        existingDocs.set(meta.path, doc.name!);
       }
     }
   } catch (e: any) {
     console.log(
-      `⚠️ Attention: Impossible de lire le corpus (Existe-t-il ?). Erreur ignorée. ${e.message}`,
+      `⚠️  Impossible de lister les documents du store. Erreur ignorée : ${e.message}`,
     );
   }
 
@@ -79,7 +112,6 @@ async function syncFiles() {
   for (const path of toDelete) {
     console.log(`💥 Suppression de l'ancienne version : ${path}`);
 
-    // Supprimer du Stuffing
     const fileId = existingFiles.get(path);
     if (fileId) {
       try {
@@ -89,21 +121,17 @@ async function syncFiles() {
       }
     }
 
-    // Supprimer du RAG
-    const docId = existingCorpusDocs.get(path);
+    const docId = existingDocs.get(path);
     if (docId) {
       try {
-        await ai.corpora.documents.delete({
-          corpus: corpusName,
-          document: docId,
-        });
+        await ai.fileSearchStores.documents.delete({ name: docId });
       } catch (e) {
         /* ignore */
       }
     }
   }
 
-  // --- ÉTAPE 3 : MUTATIONS (UPLOAD + INDEXATION) ---
+  // --- ÉTAPE 3 : MUTATIONS (DUAL-WRITE : FILES + FILE SEARCH STORE) ---
   let bytesAddedInThisPush = 0;
 
   for (const path of toUpload) {
@@ -142,61 +170,30 @@ async function syncFiles() {
 
       const encodedName = encodeDisplayName(path);
 
-      // 3A. API File (Pour le Stuffing)
+      // 3A. Files API (Stuffing brut, microscope)
       const uploadRes = await ai.files.upload({
         file: path,
         config: { mimeType, displayName: encodedName },
       });
       bytesAddedInThisPush += stats.size;
 
-      // 3B. API Corpora (Pour le RAG Managé)
-      // On n'indexe le contenu que si c'est du texte brut (impossible d'extraire un PDF avec un simple fs.readFileSync)
-      const isText = [
-        "md",
-        "txt",
-        "ts",
-        "js",
-        "json",
-        "csv",
-        "yml",
-        "yaml",
-      ].includes(ext);
+      // 3B. FileSearchStore (RAG managé, chunking + vectorisation auto, PDF natifs)
+      let op = await ai.fileSearchStores.uploadToFileSearchStore({
+        file: path,
+        fileSearchStoreName: storeName,
+        config: { displayName: encodedName },
+      });
+      op = await awaitOperation(op);
 
-      if (isText) {
-        const textContent = fs.readFileSync(path, "utf-8");
-
-        // Création du conteneur Document
-        const newDoc = await ai.corpora.documents.create({
-          corpus: corpusName,
-          document: {
-            displayName: encodedName,
-            customMetadata: [{ key: "repo", stringValue: githubRepo }],
-          },
-        });
-
-        // Injection du contenu textuel complet (Gemini gère le chunking en interne)
-        await ai.corpora.documents.chunks.create({
-          corpus: corpusName,
-          document: newDoc.name,
-          chunk: {
-            data: { stringValue: textContent },
-          },
-        });
-
-        console.log(
-          `✅ Succès : ${path} indexé (File: ${uploadRes.name} | RAG: Vectorisé)`,
-        );
-      } else {
-        console.log(
-          `✅ Succès : ${path} indexé (File: ${uploadRes.name} | RAG: Ignoré car binaire)`,
-        );
-      }
+      console.log(
+        `✅ Succès : ${path} (Files: ${uploadRes.name} | RAG: indexé)`,
+      );
     } catch (e) {
       console.error(`❌ Erreur globale sur ${path}:`, e);
     }
   }
 
-  // --- ÉTAPE 4 : GÉNÉRATION DU RAPPORT GITHUB STEP SUMMARY ---
+  // --- ÉTAPE 4 : GITHUB STEP SUMMARY ---
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
     const toMb = (bytes: number) => (bytes / (1024 * 1024)).toFixed(3);
@@ -211,12 +208,12 @@ async function syncFiles() {
 | Section | Détails | Valeur |
 | :--- | :--- | :--- |
 | **Push Actuel** | Fichiers traités | ${toUpload.length} |
-| | Volume transféré | ${toMb(bytesAddedInThisPush)} Mo |
-| **Repo dans le Vault** | **Volume Occupé** | **${toMb(totalVaultSizeBytes)} Mo** |
+| | Volume transféré (Files API) | ${toMb(bytesAddedInThisPush)} Mo |
+| **Repo dans le Vault** | **Volume Files API** | **${toMb(totalVaultSizeBytes)} Mo** |
 | | **Coût Stockage Est.** | **~${monthlyCost} $ / mois** |
 
 > [!TIP]
-> **Architecture Hybride :** Les fichiers textes sont poussés dans le File Store (Stuffing) ET dans le Vector Store (RAG Managé). Les binaires (PDF) sont uniquement dans le File Store.
+> **Architecture Hybride :** Files API (Stuffing/microscope) + FileSearchStore (RAG managé, chunking auto, PDF natifs).
     `;
     fs.appendFileSync(summaryPath, report);
   }

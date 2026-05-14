@@ -18,6 +18,17 @@ const parseDisplayName = (displayName?: string) => {
   return { corpus: parts[1], repo: parts[2], path: parts[3] };
 };
 
+async function findStore(): Promise<string | null> {
+  if (!corpusName) return null;
+  const pager = await ai.fileSearchStores.list({ config: { pageSize: 100 } });
+  for await (const store of pager) {
+    if (store.displayName === corpusName) {
+      return store.name!;
+    }
+  }
+  return null;
+}
+
 async function cleanVault() {
   if (!corpusName || !targetRepo) {
     throw new Error(
@@ -34,7 +45,7 @@ async function cleanVault() {
   const filesToDelete: { name: string; path: string }[] = [];
   const docsToDelete: { name: string; path: string }[] = [];
 
-  // --- 1. Scan de l'API File (Stuffing Store) ---
+  // --- 1. Scan de la Files API (Stuffing Store) ---
   console.log("🔍 Scan du File Store...");
   const filePager = await ai.files.list();
   for await (const f of filePager) {
@@ -44,21 +55,26 @@ async function cleanVault() {
     }
   }
 
-  // --- 2. Scan de l'API Corpora (Vector RAG Store) ---
-  console.log("🔍 Scan du Vector Store (Corpora)...");
-  try {
-    const docPager = await ai.corpora.documents.list({
-      corpus: corpusName,
-      pageSize: 100,
-    });
-    for await (const d of docPager || []) {
-      const meta = parseDisplayName(d.displayName);
-      if (meta && meta.repo === targetRepo && meta.corpus === corpusName) {
-        docsToDelete.push({ name: d.name!, path: meta.path });
+  // --- 2. Scan du FileSearchStore (Vector RAG Store) ---
+  console.log(`🔍 Scan du Vector Store (Store: ${corpusName})...`);
+  const storeName = await findStore();
+  if (!storeName) {
+    console.log(`   ↳ Aucun store "${corpusName}" — rien à nettoyer côté RAG.`);
+  } else {
+    try {
+      const docPager = await ai.fileSearchStores.documents.list({
+        parent: storeName,
+        config: { pageSize: 100 },
+      });
+      for await (const d of docPager) {
+        const meta = parseDisplayName(d.displayName);
+        if (meta && meta.repo === targetRepo && meta.corpus === corpusName) {
+          docsToDelete.push({ name: d.name!, path: meta.path });
+        }
       }
+    } catch (e: any) {
+      console.log(`⚠️  Lecture du store impossible : ${e.message}`);
     }
-  } catch (e: any) {
-    console.log(`⚠️  Corpus introuvable ou vide : ${e.message}`);
   }
 
   // --- 3. Bilan ---
@@ -81,7 +97,6 @@ async function cleanVault() {
   // --- 4. Exécution ---
   console.log("\n🚀 Exécution de la purge...");
 
-  // Suppression côté Files
   for (const f of filesToDelete) {
     try {
       await ai.files.delete({ name: f.name });
@@ -91,13 +106,9 @@ async function cleanVault() {
     }
   }
 
-  // Suppression côté Corpora
   for (const d of docsToDelete) {
     try {
-      await ai.corpora.documents.delete({
-        corpus: corpusName,
-        document: d.name,
-      });
+      await ai.fileSearchStores.documents.delete({ name: d.name });
       console.log(`✅ [RAG]  Supprimé : ${d.path}`);
     } catch (e: any) {
       console.error(`❌ [RAG]  Échec sur ${d.path} :`, e.message);
